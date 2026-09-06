@@ -1,0 +1,31 @@
+# Experiment matrix for the four inference-only generation methods, matching
+# Section 4.1's comparison table and the Attention-Modulation ramp-size /
+# seed sweep.
+
+methods:
+  - simple                  # unmodified one-shot baseline
+  - attend_and_excite       # Chefer et al. 2023 baseline
+  - context_switching       # hard prompt-switching ablation
+  - attention_modulation    # GCD (ours)
+
+backbones:
+  sd15: runwayml/stable-diffusion-v1-5
+  dreamshaper8: Lykon/dreamshaper-8
+  sdxl: stabilityai/stable-diffusion-xl-base-1.0
+
+steps_per_backbone:
+  sd15: 1200
+  dreamshaper8: 1200
+  sdxl: 500          # SDXL's two-stage UNet needs far fewer steps for comparable quality
+
+attention_modulation:
+  ramp_sizes: [0, 5, 10, 15, 20]
+  obj_suppress: 0.05
+  bg_boost: 1.5
+
+evaluation:
+  n_test_images: 50
+  seeds: [42]
+  box_threshold: 0.25
+  text_threshold: 0.25
+  similarity_threshold: 0.70

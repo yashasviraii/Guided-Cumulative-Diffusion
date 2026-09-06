@@ -1,0 +1,28 @@
+# Core
+torch>=2.1
+torchvision
+numpy
+
+# Diffusion / generation
+diffusers>=0.27
+transformers>=4.40
+accelerate
+peft
+safetensors
+
+# GNN
+torch-geometric
+
+# Data pipeline
+jsonlines
+scikit-learn
+Pillow
+tqdm
+
+# Evaluation
+lpips
+sentence-transformers
+matplotlib
+
+# Misc
+huggingface_hub

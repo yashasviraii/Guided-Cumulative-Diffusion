@@ -1,0 +1,29 @@
+# Default paths for the Section 3.2 dataset-construction pipeline.
+# Override any of these on the command line; every gcd.data.* script also
+# accepts every field below as its own --flag (see `python main.py data <stage> --help`).
+
+paths:
+  raw_images: data/raw_images            # e.g. MS COCO 2017 val split
+  descriptions: data/descriptions.jsonl
+  parsed_images: data/parsed_images.jsonl
+  background_context: data/backgroundContext.jsonl
+  merged: data/merged.jsonl
+  detection_prompts: data/detection_prompts.txt
+  bounding_boxes: data/boundingBoxCoordinates.jsonl
+  semantic_matches: data/semanticMatches.jsonl
+  gnn_graphs_dir: data/gnn_graphs
+
+models:
+  vlm: OpenGVLab/InternVL2-4B
+  llm: Qwen/Qwen2.5-3B-Instruct
+  detector: IDEA-Research/grounding-dino-base
+
+detection:
+  box_threshold: 0.25
+  text_threshold: 0.25
+  conf_threshold: 0.25
+  batch_size: 4
+  workers: 4
+
+graph_parsing:
+  batch_size: 8

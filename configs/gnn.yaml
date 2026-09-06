@@ -1,0 +1,12 @@
+# Defaults for `python main.py gnn train` (see gcd/gnn/train.py for the full flag list).
+
+graph_dir: data/gnn_graphs
+model_type: gcn          # "gcn" (paper default) or "mlp" (structure-free ablation)
+hidden_channels: 64
+num_layers: 3             # matches Eq. 1's 3-layer GCN
+learning_rate: 0.001
+batch_size: 8
+epochs: 100
+patience: 20
+checkpoint_out: checkpoints/gnn_model.pt
+plot_out: checkpoints/gnn_training_history.png
