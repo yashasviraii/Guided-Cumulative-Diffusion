@@ -58,6 +58,9 @@ class AttentionModulationDiffusion:
             if isinstance(module, Attention):
                 module.set_processor(processor)
                 count += 1
+        self.pipeline.unet.set_attn_processor(
+            {k: v for k, v in self.pipeline.unet.attn_processors.items()}
+        )
         print(f"GCD attention processors registered on {count} layers.")
     @staticmethod
     def sanitize_background(background: str, node_names: List[str], attributes: Dict[str, Dict]) -> str:
