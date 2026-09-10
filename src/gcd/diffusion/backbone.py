@@ -19,28 +19,26 @@ def load_pipeline(base_model: str = DEFAULT_BASE_MODEL, device: str = "cuda") ->
     dtype = torch.float16 if device.startswith("cuda") else torch.float32
     pipeline = StableDiffusionPipeline.from_pretrained(base_model, torch_dtype=dtype, safety_checker=None)
     pipeline = pipeline.to(device)
+    try:
+        pipeline.enable_xformers_memory_efficient_attention()
+        print("xformers enabled for faster inference.")
+    except Exception:
+        print("xformers not available, skipping.")
     pipeline.enable_attention_slicing()
     return pipeline
 
 
-def swap_long_horizon_scheduler(pipeline: StableDiffusionPipeline, min_train_timesteps: int = 1200) -> None:
-    """Swap to a scheduler that behaves well for long (>1000-step) denoising runs.
-
-    Tries DPM-Solver++ first, falls back to DDIM, and leaves the pipeline's
-    original scheduler untouched if both fail.
-    """
-    last_error: Exception | None = None
-    for scheduler_cls, name in ((DPMSolverMultistepScheduler, "DPMSolverMultistepScheduler"), (DDIMScheduler, "DDIMScheduler")):
-        try:
-            config = dict(pipeline.scheduler.config)
-            config["num_train_timesteps"] = max(min_train_timesteps, config.get("num_train_timesteps", 1000))
-            pipeline.scheduler = scheduler_cls.from_config(config)
-            print(f"Using {name} for {min_train_timesteps}-step inference.")
-            return
-        except Exception as exc:  # noqa: BLE001
-            last_error = exc
-    print(f"Warning: could not swap scheduler, keeping the default one: {last_error!r}")
-
+def swap_long_horizon_scheduler(pipeline, min_train_timesteps: int = 1200) -> None:
+    from diffusers import DDIMScheduler
+    try:
+        config = dict(pipeline.scheduler.config)
+        config["num_train_timesteps"] = max(
+            min_train_timesteps, config.get("num_train_timesteps", 1000)
+        )
+        pipeline.scheduler = DDIMScheduler.from_config(config)
+        print(f"Scheduler: DDIM, num_train_timesteps={config['num_train_timesteps']}")
+    except Exception as exc:
+        print(f"Warning: DDIM swap failed ({exc!r}); keeping default.")
 
 def decode_latents(pipeline: StableDiffusionPipeline, latents: torch.Tensor):
     """Decode VAE latents to a PIL image."""

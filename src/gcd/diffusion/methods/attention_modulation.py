@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 from PIL import Image
-
+from diffusers.models.attention_processor import Attention
 from gcd.diffusion.attention_processor import (
     OBJ_SUPPRESS,
     RAMP_LEN,
@@ -34,8 +34,8 @@ from gcd.diffusion.prompt_stacking import build_cumulative_prompt, compute_step_
 from gcd.graph.sanitize import sanitize_background
 from gcd.parsing.description_parser import DescriptionParser
 
-BG_STEPS = 100
-INTRO_PHASE_END = 1000
+BG_STEPS = 20          # was 100
+INTRO_PHASE_END = 200  # was 1000
 
 
 class AttentionModulationDiffusion:
@@ -51,11 +51,14 @@ class AttentionModulationDiffusion:
         self._register_processors()
 
     def _register_processors(self) -> None:
+        from diffusers.models.attention_processor import Attention
         processor = GCDAttentionProcessor(self._attn_state)
-        procs = {key: processor for key in self.pipeline.unet.attn_processors}
-        self.pipeline.unet.set_attn_processor(procs)
-        print(f"GCD attention processors registered on {len(procs)} layers.")
-
+        count = 0
+        for _, module in self.pipeline.unet.named_modules():
+            if isinstance(module, Attention):
+                module.set_processor(processor)
+                count += 1
+        print(f"GCD attention processors registered on {count} layers.")
     @staticmethod
     def sanitize_background(background: str, node_names: List[str], attributes: Dict[str, Dict]) -> str:
         return sanitize_background(background, node_names, attributes)
@@ -88,12 +91,15 @@ class AttentionModulationDiffusion:
         torch.manual_seed(seed)
         np.random.seed(seed)
 
+        BG_STEPS = int(num_inference_steps * (100 / 1200))
+        INTRO_PHASE_END = int(num_inference_steps * (1000 / 1200))
         step_allocations = compute_step_allocations(node_names, priority_scores, BG_STEPS, INTRO_PHASE_END)
 
         full_prompt, concept_searches = build_cumulative_prompt(
             background, node_names, attributes, relations, priority_scores, prompt_rewriter
         )
         print(f"[AttentionModulation/GCD] Full prompt: {full_prompt[:120]}...")
+        
 
         token_spans = find_token_spans(full_prompt, concept_searches, self.pipeline.tokenizer)
         n_tok = self.pipeline.tokenizer.model_max_length

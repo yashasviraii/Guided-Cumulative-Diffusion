@@ -19,9 +19,9 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-BG_BOOST = 1.5
-OBJ_SUPPRESS = 0.05
-RAMP_LEN = 15
+BG_BOOST = 1.3
+OBJ_SUPPRESS = 0.15
+RAMP_LEN = 3
 
 
 class AttentionState:

@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import torch
-
+from gcd.diffusion.backbone import DEFAULT_BASE_MODEL
 from gcd.diffusion.methods import METHOD_REGISTRY
 from gcd.diffusion.precomputed_scene import load_jsonl_by_file, load_precomputed_scene
 from gcd.graph.graph_builder import InferenceGraphBuilder
@@ -146,14 +146,14 @@ def run_sweep(
     graphs_dir: Optional[str] = None,
     parsed_path: Optional[str] = None,
     background_path: Optional[str] = None,
+    base_model: str = DEFAULT_BASE_MODEL
 ) -> None:
     method_cls = METHOD_REGISTRY[method_name]
     precomputed_mode = graphs_dir is not None and parsed_path is not None
 
     print("\n[Step 1] Loading shared models...")
     gnn_model = SimpleGCNInference(gnn_checkpoint, device=device)
-    diffusion = method_cls(device=device)
-
+    diffusion = method_cls(base_model=base_model, device=device)
     parser: Optional[DescriptionParser] = None
     parsed_map: Dict[str, dict] = {}
     background_map: Optional[Dict[str, dict]] = None
@@ -193,8 +193,10 @@ def run_sweep(
             for seed in seeds:
                 run_tag = img_id
                 extra_kwargs: Dict = {}
-                if ramp_len is not None:
+                # Only append "_ramp{N}" when actually sweeping more than one ramp size.
+                if ramp_len is not None and len(ramp_values) > 1:
                     run_tag += f"_ramp{ramp_len}"
+                if ramp_len is not None:
                     extra_kwargs["ramp_len"] = ramp_len
                 if len(seeds) > 1:
                     run_tag += f"_seed{seed}"
@@ -274,6 +276,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--background", default=None,
         help="Precomputed mode: backgroundContext.jsonl (omit if --parsed is already merged.jsonl)",
     )
+    parser.add_argument(
+        "--base-model", default=DEFAULT_BASE_MODEL,
+        help="Diffusion backbone to use (overrides method default)"
+    )
     return parser
 
 
@@ -295,6 +301,7 @@ def main() -> None:
         graphs_dir=args.graphs_dir,
         parsed_path=args.parsed,
         background_path=args.background,
+        base_model=args.base_model
     )
 
 

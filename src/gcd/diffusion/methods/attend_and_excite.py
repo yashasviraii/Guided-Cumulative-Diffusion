@@ -32,7 +32,7 @@ class AttendAndExciteDiffusion:
     """Attend-and-Excite baseline via ``diffusers.StableDiffusionAttendAndExcitePipeline``."""
 
     def __init__(self, base_model: str = DEFAULT_BASE_MODEL, device: str = "cuda") -> None:
-        from diffusers import StableDiffusionAttendAndExcitePipeline
+        from diffusers import StableDiffusionAttendAndExcitePipeline, DDIMScheduler
 
         self.device = device
         print(f"[AttendAndExcite] Loading base model: {base_model}")
@@ -41,6 +41,19 @@ class AttendAndExciteDiffusion:
             base_model, torch_dtype=dtype, safety_checker=None
         ).to(device)
 
+        # Force DDIM to match the scheduler used by Simple / Context Switching / GCD.
+        try:
+            config = dict(self.pipeline.scheduler.config)
+            config["num_train_timesteps"] = max(
+                1200, config.get("num_train_timesteps", 1000)
+            )
+            self.pipeline.scheduler = DDIMScheduler.from_config(config)
+            print(
+                f"[AttendAndExcite] Scheduler: DDIM, "
+                f"num_train_timesteps={config['num_train_timesteps']}"
+            )
+        except Exception as exc:
+            print(f"[AttendAndExcite] Warning: DDIM swap failed ({exc!r}); keeping default.")
     def _subject_token_indices(self, prompt: str, node_names: List[str]) -> List[int]:
         """Find the token index of each object's first word in ``prompt``."""
         tokenizer = self.pipeline.tokenizer
