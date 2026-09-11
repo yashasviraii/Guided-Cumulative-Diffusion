@@ -10,6 +10,23 @@ from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 
+class PairwiseRankingLoss(torch.nn.Module):
+    """Penalizes pairs where pred ordering disagrees with target ordering."""
+    def __init__(self, margin=0.1, min_gap=0.05):
+        super().__init__()
+        self.margin = margin
+        self.min_gap = min_gap
+
+    def forward(self, pred, target):
+        # pred, target: [N]
+        diff_t = target.unsqueeze(0) - target.unsqueeze(1)
+        diff_p = pred.unsqueeze(0) - pred.unsqueeze(1)
+        # For pairs with target_i > target_j by at least min_gap,
+        # we want pred_i > pred_j by at least margin.
+        loss = torch.clamp(self.margin - diff_p * torch.sign(diff_t), min=0)
+        mask = (diff_t.abs() > self.min_gap).float()
+        return (loss * mask).sum() / (mask.sum() + 1e-6)
+
 class GNNTrainer:
     """Trains a node-level priority regressor with MSE loss and early stopping."""
 
@@ -23,17 +40,20 @@ class GNNTrainer:
         self.model = model.to(device)
         self.device = device
         self.checkpoint_path = checkpoint_path
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learning_rate)
-        self.criterion = torch.nn.MSELoss()
+        self.optimizer = torch.optim.Adam(
+            self.model.parameters(), lr=learning_rate,  # weight_decay=1e-4
+        )
+        self.criterion = PairwiseRankingLoss(margin=0.1, min_gap=0.05)
         self.history: Dict[str, List[float]] = {"train_loss": [], "val_loss": []}
 
-    def train_epoch(self, loader: DataLoader) -> float:
+    def train_epoch(self, loader):
         self.model.train()
         total_loss = 0.0
         for batch in tqdm(loader, desc="Training", leave=False):
             batch = batch.to(self.device)
             self.optimizer.zero_grad()
-            out = self.model(batch.x, batch.edge_index)
+            edge_type = batch.edge_attr.squeeze(-1).long()
+            out = self.model(batch.x, batch.edge_index, edge_type=edge_type)
             loss = self.criterion(out, batch.y)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
@@ -42,13 +62,14 @@ class GNNTrainer:
         return total_loss / max(1, len(loader))
 
     @torch.no_grad()
-    def evaluate(self, loader: DataLoader, name: str = "Val") -> tuple[float, float]:
+    def evaluate(self, loader, name="Val"):
         self.model.eval()
         total_loss = 0.0
         all_pred, all_true = [], []
         for batch in tqdm(loader, desc=name, leave=False):
             batch = batch.to(self.device)
-            out = self.model(batch.x, batch.edge_index)
+            edge_type = batch.edge_attr.squeeze(-1).long()
+            out = self.model(batch.x, batch.edge_index, edge_type=edge_type)
             total_loss += self.criterion(out, batch.y).item()
             all_pred.extend(out.cpu().numpy())
             all_true.extend(batch.y.cpu().numpy())

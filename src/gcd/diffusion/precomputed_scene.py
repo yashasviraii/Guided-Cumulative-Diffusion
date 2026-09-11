@@ -17,17 +17,53 @@ checkpoint sees inputs consistent with what it was trained on, and no LLM
 needs to be loaded at all unless you explicitly want LLM-based prompt
 stacking (see ``prompt_rewriter`` in ``gcd.diffusion.prompt_stacking``).
 """
-
 from __future__ import annotations
 
 import json
+import re
+from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
+import numpy as np
 from gcd.gnn.models import SimpleGCNInference
 from gcd.graph.graph_io import find_graph_path, load_precomputed_graph
 from gcd.graph.priority_scorer import PriorityScorer
 from gcd.graph.sanitize import sanitize_background
+
+
+
+# --- Priority ensemble configuration ---
+W_RGCN = 0.6   # ensemble weight for RGCN; 1-W_RGCN goes to class-prior
+
+
+@lru_cache(maxsize=1)
+def _load_class_prior() -> dict:
+    for p in [Path("checkpoints/class_prior_clean.json"),
+              Path("checkpoints/class_prior.json")]:
+        if p.exists():
+            return json.load(open(p))
+    return {}
+
+
+def _canonical(name: str) -> str:
+    if name.startswith("##"):
+        return ""
+    name = re.sub(r"\s*\d+\s*$", "", name)
+    return re.sub(r"(?<!^)(?=[A-Z])", " ", name).lower().strip()
+
+
+def _minmax(a: np.ndarray) -> np.ndarray:
+    lo, hi = float(a.min()), float(a.max())
+    return (a - lo) / max(hi - lo, 1e-6)
+
+
+def _ensemble_priority(rgcn_scores: np.ndarray, node_names: List[str]) -> np.ndarray:
+    """0.6 * normalized(RGCN) + 0.4 * normalized(class-prior)."""
+    prior = _load_class_prior()
+    cm = np.array([prior.get(_canonical(n), 0.15) for n in node_names], dtype=np.float32)
+    return W_RGCN * _minmax(rgcn_scores) + (1.0 - W_RGCN) * _minmax(cm)
+
 
 
 def load_jsonl_by_file(path: str) -> Dict[str, dict]:
@@ -64,8 +100,7 @@ def load_precomputed_scene(
     graph_path = find_graph_path(graphs_dir, file_id)
     if graph_path is None:
         return None
-    node_features, node_names, edge_index = load_precomputed_graph(graph_path)
-
+    node_features, node_names, edge_index, edge_type = load_precomputed_graph(graph_path)
     parsed_rec = parsed_map.get(file_path)
     if parsed_rec is None:
         return None
@@ -78,8 +113,14 @@ def load_precomputed_scene(
     else:
         background = parsed_rec.get("background_context", "")
 
-    raw_scores = PriorityScorer.score_nodes(node_features, gnn_model, edge_index=edge_index)
-    priority_scores = PriorityScorer.normalize_scores(raw_scores)
+    rgcn_raw = PriorityScorer.score_nodes(
+        node_features,
+        gnn_model,
+        edge_index=edge_index,
+        edge_type=edge_type,
+    )
+    ensemble_raw = _ensemble_priority(rgcn_raw, node_names)
+    priority_scores = PriorityScorer.normalize_scores(ensemble_raw)
 
     cleaned_background = sanitize_background(background, node_names, objects)
 

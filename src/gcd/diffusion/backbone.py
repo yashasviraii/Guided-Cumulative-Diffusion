@@ -28,13 +28,14 @@ def load_pipeline(base_model: str = DEFAULT_BASE_MODEL, device: str = "cuda") ->
     return pipeline
 
 
-def swap_long_horizon_scheduler(pipeline, min_train_timesteps: int = 1200) -> None:
+def swap_long_horizon_scheduler(pipeline, min_train_timesteps: int | None = None) -> None:
     from diffusers import DDIMScheduler
     try:
         config = dict(pipeline.scheduler.config)
-        config["num_train_timesteps"] = max(
-            min_train_timesteps, config.get("num_train_timesteps", 1000)
-        )
+        if min_train_timesteps is not None:
+            config["num_train_timesteps"] = max(
+                min_train_timesteps, config.get("num_train_timesteps", 1000)
+            )
         pipeline.scheduler = DDIMScheduler.from_config(config)
         print(f"Scheduler: DDIM, num_train_timesteps={config['num_train_timesteps']}")
     except Exception as exc:

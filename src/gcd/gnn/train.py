@@ -14,6 +14,8 @@ The graph directory must contain ``{split}/*.json`` files produced by
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 import torch
 from torch_geometric.loader import DataLoader
@@ -64,16 +66,28 @@ def main() -> None:
 
     in_channels = next(iter(train_loader)).x.shape[1]
     print(f"Input feature dimension: {in_channels}")
+    # After GraphDataset setup, before model construction:
+    num_relations = train_dataset.num_relations
+    print(f"Global relation vocab size: {num_relations}")
 
     if args.model_type == "gcn":
-        model: torch.nn.Module = NodeLevelGNN(
+        model = NodeLevelGNN(
             in_channels=in_channels,
             hidden_channels=args.hidden_channels,
             num_layers=args.num_layers,
+            num_relations=num_relations,
         )
     else:
-        print("Using SimpleMLP for fast, structure-free training.")
         model = SimpleMLP(in_channels)
+    # if args.model_type == "gcn":
+    #     model: torch.nn.Module = NodeLevelGNN(
+    #         in_channels=in_channels,
+    #         hidden_channels=args.hidden_channels,
+    #         num_layers=args.num_layers,
+    #     )
+    # else:
+    #     print("Using SimpleMLP for fast, structure-free training.")
+    #     model = SimpleMLP(in_channels)
 
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
 
@@ -85,8 +99,17 @@ def main() -> None:
     )
     trainer.fit(train_loader, val_loader, test_loader, epochs=args.epochs, patience=args.patience)
     trainer.plot_history(args.plot_out)
-    print(f"\nDone. Best checkpoint saved to {args.checkpoint_out}")
 
+    # --- Save the shared name vocabulary alongside the checkpoint ---
+    vocab_path = Path(args.checkpoint_out).with_name("gnn_name_vocab.json")
+    with open(vocab_path, "w") as f:
+        json.dump(train_dataset.name_to_idx, f)
+    print(f"Saved name vocab ({train_dataset.n_classes} classes) to {vocab_path}")
+
+    rel_path = Path(args.checkpoint_out).with_name("gnn_relation_vocab.json")
+    with open(rel_path, "w") as f:
+        json.dump(train_dataset.relation_to_idx, f)
+    print(f"Saved relation vocab ({num_relations} relations) to {rel_path}")
 
 if __name__ == "__main__":
     main()

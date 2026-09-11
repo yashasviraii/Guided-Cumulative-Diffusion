@@ -14,17 +14,16 @@ class PriorityScorer:
     """Score entities with a trained GCN and normalize into a step-budget distribution."""
 
     @staticmethod
-    def score_nodes(node_features: np.ndarray, gnn_model, edge_index: Optional[np.ndarray] = None) -> np.ndarray:
-        """Run the GCN/MLP priority model and clip raw scores to [0, 1].
-
-        Pass ``edge_index`` (shape ``[2, E]``, from a precomputed graph JSON
-        or an inference-time relation graph) whenever real object-relation
-        structure is available — a GCN checkpoint uses it; an MLP checkpoint
-        ignores it.
-        """
-        scores = gnn_model.score_nodes(node_features, edge_index=edge_index)
+    def score_nodes(
+        node_features: np.ndarray,
+        gnn_model,
+        edge_index: Optional[np.ndarray] = None,
+        edge_type: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        scores = gnn_model.score_nodes(
+            node_features, edge_index=edge_index, edge_type=edge_type
+        )
         return np.clip(scores, 0, 1)
-
     @staticmethod
     def normalize_scores(scores: np.ndarray, min_score: float = 0.01) -> np.ndarray:
         """Enforce a minimum per-object priority, then renormalize to sum to 1."""

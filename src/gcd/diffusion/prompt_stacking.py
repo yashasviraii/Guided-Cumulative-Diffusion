@@ -33,7 +33,9 @@ def build_cumulative_prompt(
     ignore the second return value.
     """
     base_prompt = background if background else "a scene"
-    sorted_idx = np.argsort(priority_scores)[::-1]
+    if len(base_prompt.split()) > 25:
+        base_prompt = " ".join(base_prompt.split()[:25]).rstrip(",.;") + "."
+    sorted_idx = np.argsort(priority_scores)
 
     concept_searches: Dict[str, str] = {"background": base_prompt.split(".")[0].strip()[:40]}
     prompt = base_prompt
