@@ -201,6 +201,10 @@ def run_sweep(
                 if len(seeds) > 1:
                     run_tag += f"_seed{seed}"
 
+                # Simple baseline: use the raw VLM description, not the structured prompt.
+                if method_name == "simple":
+                    extra_kwargs["raw_description"] = description
+
                 output_dir = output_root / run_tag
                 if (output_dir / "generated_image.png").exists():
                     print(f"Skipping {run_tag}, output already exists.")

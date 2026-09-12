@@ -287,12 +287,10 @@ class ModelRunner:
     # ── Method: Simple Diffusion (one-shot baseline) ────────────────────────
 
     def run_simple(self, description, output_dir, parser, gnn_model, seed, height=512, width=512, file_path=None, precomputed=None):
-        scene = self._prepare_scene(description, parser, gnn_model, file_path, precomputed)
-        if scene is None:
-            return None
-        objects, relations, background, node_names, scores = scene
-        order = [node_names[i] for i in np.argsort(scores)[::-1]]
-        final_prompt = self._stack_prompt(parser, background or "a scene", order, objects, relations)
+        """Baseline: unmodified diffusion conditioned on the raw VLM caption.
+        No scene graph, no priority ordering, no scheduling — the true
+        'just prompt it' standard T2I baseline."""
+        final_prompt = description
 
         max_ts = getattr(self.pipeline.scheduler.config, "num_train_timesteps", 1000)
         num_steps = self.num_steps if self.num_steps < max_ts else max_ts - 1
@@ -305,11 +303,35 @@ class ModelRunner:
 
         output_dir.mkdir(parents=True, exist_ok=True)
         image.save(output_dir / "generated_image.png")
-        self._dump_result(output_dir, "simple", description, final_prompt, objects, node_names, scores)
+        self._dump_result(output_dir, "simple", description, final_prompt, {}, [], np.array([]))
         return final_prompt
 
     # ── Method: Context Switching (hard prompt-switching ablation) ─────────
 
+    # def run_simple_raw(
+    #     self,
+    #     description: str,
+    #     output_dir: Path,
+    #     parser,
+    #     gnn_model,
+    #     seed: int,
+    #     height: int = 512,
+    #     width: int = 512,
+    #     file_path: str = None,
+    #     precomputed: dict = None,
+    # ):
+    #     """Standard diffusion with the raw VLM description as prompt.
+    #     No scene graph, no priority ordering — the true 'just prompt it' baseline."""
+    #     generator = torch.Generator(device=self.device).manual_seed(seed)
+    #     image = self.pipeline(
+    #         prompt=description,
+    #         num_inference_steps=self.num_steps,
+    #         guidance_scale=7.5,
+    #         generator=generator,
+    #         height=height,
+    #         width=width,
+    #     ).images[0]
+    #     return image
     def run_context_switching(self, description, output_dir, parser, gnn_model, seed, height=512, width=512, file_path=None, precomputed=None):
         scene = self._prepare_scene(description, parser, gnn_model, file_path, precomputed)
         if scene is None:

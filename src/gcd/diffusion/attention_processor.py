@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 BG_BOOST = 1.3
-OBJ_SUPPRESS = 0.15
+OBJ_SUPPRESS = 0.5
 RAMP_LEN = 3
 
 

@@ -43,10 +43,14 @@ class SimpleDiffusion:
         seed: int = 42,
         output_dir: Optional[str] = None,
         prompt_rewriter: Optional[DescriptionParser] = None,
+        raw_description: Optional[str] = None,          # <-- new
     ) -> Tuple[Image.Image, str]:
-        final_prompt, _ = build_cumulative_prompt(
-            background, node_names, attributes, relations, priority_scores, prompt_rewriter
-        )
+        if raw_description is not None:
+            final_prompt = raw_description
+        else:
+            final_prompt, _ = build_cumulative_prompt(
+                background, node_names, attributes, relations, priority_scores, prompt_rewriter
+            )
         print(f"[SimpleDiffusion] Prompt: {final_prompt[:120]}...")
 
         num_steps = self._safe_step_count(num_inference_steps)

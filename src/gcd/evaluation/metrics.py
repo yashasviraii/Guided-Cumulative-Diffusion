@@ -57,10 +57,9 @@ def load_jsonl_map(path: str) -> Dict[str, dict]:
 
 
 def clean_prompt(text: str) -> str:
-    """Convert compound object names into natural language for Grounding DINO."""
-    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
-    text = text.replace("_", " ").replace("-", " ")
-    return " ".join(text.lower().split())
+    """Lowercase only — DINO matches camelCase as a single token better
+    than a spaced-out phrase (matches what manual diagnostics use)."""
+    return text.lower().strip()
 
 
 class MetricsDataset(Dataset):
@@ -106,6 +105,9 @@ class MetricsDataset(Dataset):
         clean_prompts = [clean_prompt(o) for o in gt_obj_names]
         dino_prompt = " . ".join(clean_prompts) + " ." if clean_prompts else ""
 
+        print(f"[PROMPT-DEBUG] {base}: gt_names={gt_obj_names[:3]} "
+            f"clean={clean_prompts[:3]} "
+            f"final={dino_prompt[:180]!r}")
         return {
             "base": base, "pil": pil_img, "clip_desc": desc, "gt_img": gt_img,
             "gt_obj_names": gt_obj_names, "dino_prompt": dino_prompt,
@@ -323,7 +325,7 @@ def _score_object_accuracy(
         gt_names_batch = [batch["gt_obj_names_list"][i] for i in valid_idx]
 
         inputs = dino_processor(images=iou_pils, text=prompts, return_tensors="pt", padding=True).to(device)
-        with torch.no_grad(), torch.autocast(device_type=autocast_device, dtype=torch.float16):
+        with torch.no_grad():
             outputs = dino_model(**inputs)
 
         target_sizes = [img.size[::-1] for img in iou_pils]
@@ -335,11 +337,14 @@ def _score_object_accuracy(
             dino_res = dino_processor.post_process_grounded_object_detection(
                 outputs, inputs.input_ids, box_threshold=args.box_thresh, text_threshold=args.text_thresh,
                 target_sizes=target_sizes,
-            )
-
+            )  
         for j, res in enumerate(dino_res):
+            labels_j = res.get("text_labels", res.get("labels", []))
+            print(f"[EVAL-DEBUG] base={bases[valid_idx[j]]} "
+                f"n_det={len(labels_j)} "
+                f"labels={[str(x) for x in labels_j[:10]]}")
             gt_names = gt_names_batch[j]
-            detected = res.get("labels", [])
+            detected = res.get("text_labels", res.get("labels", []))
             desired_count = len(gt_names)
             intersect = 0
             if detected:
@@ -356,7 +361,10 @@ def _score_object_accuracy(
             method_details[base_img]["intersect"] = capped_intersect
             csv_reports[base_img][method]["object_accuracy"] = val
     except Exception:  # noqa: BLE001
-        pass
+        # except Exception as e:  # noqa: BLE001
+        print(f"[OA-DEBUG] {method}: EXCEPTION: {e!r}")
+        import traceback
+        traceback.print_exc()
 
 
 def _aggregate(method_details: Dict[str, dict], n_images: int) -> dict:
