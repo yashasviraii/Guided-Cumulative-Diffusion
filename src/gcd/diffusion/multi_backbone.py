@@ -163,23 +163,33 @@ class ModelRunner:
     ) -> Dict[str, Tuple[int, int]]:
         """Partition [bg_steps, intro_end) across objects proportionally to priority.
 
-        Guarantees:
-        - every object gets at least (ramp_len + 2) steps so it is fully introduced
-        - no object takes more than max_share of the introduction budget
-        - highest-priority object is introduced first
+        Duplicate-named nodes are aggregated (priority summed) so a class with
+        multiple instances gets one combined window that reflects its total
+        visual mass, rather than having duplicates collapse to a single slot
+        via last-write-wins.
         """
         n = len(node_names)
         obj_steps = self.intro_end - self.bg_steps
         if n == 0 or obj_steps <= 0:
             return {}
 
-        order = np.argsort(priority_scores)[::-1]
-        sorted_names = [node_names[int(i)] for i in order]
-        sorted_scores = np.array([float(priority_scores[int(i)]) for i in order])
+        # Aggregate duplicate names by summing priorities
+        name_to_score: Dict[str, float] = {}
+        for name, score in zip(node_names, priority_scores):
+            name_to_score[name] = name_to_score.get(name, 0.0) + float(score)
 
-        min_steps = max(ramp_len + 2, obj_steps // (n * 4))
-        alloc_steps = np.full(n, float(min_steps))
-        remaining = obj_steps - min_steps * n
+        unique_names = list(name_to_score.keys())
+        unique_scores = np.array([name_to_score[n] for n in unique_names], dtype=np.float64)
+        unique_scores = unique_scores / unique_scores.sum()
+
+        n_unique = len(unique_names)
+        order = np.argsort(unique_scores)[::-1]
+        sorted_names = [unique_names[int(i)] for i in order]
+        sorted_scores = np.array([unique_scores[int(i)] for i in order])
+
+        min_steps = max(ramp_len + 2, obj_steps // (n_unique * 4))
+        alloc_steps = np.full(n_unique, float(min_steps))
+        remaining = obj_steps - min_steps * n_unique
 
         if remaining > 0:
             s = sorted_scores / max(sorted_scores.sum(), 1e-9)
@@ -192,7 +202,7 @@ class ModelRunner:
 
         allocations: Dict[str, Tuple[int, int]] = {}
         cursor = self.bg_steps
-        for i in range(n):
+        for i in range(n_unique):
             end = min(self.intro_end, cursor + int(alloc_steps[i]))
             allocations[sorted_names[i]] = (cursor, end)
             cursor = end
@@ -405,7 +415,14 @@ class ModelRunner:
 
         for step_idx, timestep in enumerate(timesteps):
             attn_state.weight_vector = weight_schedule[step_idx].to(self.device)
-
+            if step_idx in (0, 20, 50, 100, 150, 199, 220, 239):
+                wv = weight_schedule[step_idx]
+                n_below = int((wv < 0.99).sum().item())
+                n_above = int((wv > 1.01).sum().item())
+                print(f"[AM] step {step_idx:3d}: "
+                    f"min={wv.min():.3f}  max={wv.max():.3f}  "
+                    f"n<0.99={n_below:2d}  n>1.01={n_above:2d}  "
+                    f"n_total={wv.numel()}")
             attn_state.enabled = True
             noise_cond = self.unet_forward(latents, timestep, enc_cond, height, width)
             attn_state.enabled = False

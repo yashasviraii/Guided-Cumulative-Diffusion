@@ -123,13 +123,15 @@ def find_token_spans(full_prompt: str, concept_phrases: Dict[str, str], tokenize
     for name, phrase in concept_phrases.items():
         phrase_ids = tokenizer(phrase.strip(), add_special_tokens=False)["input_ids"]
         found: List[int] = []
+        if not phrase_ids:
+            spans[name] = found
+            continue
         for start in range(1, len(full_ids) - len(phrase_ids) + 1):
             if full_ids[start : start + len(phrase_ids)] == phrase_ids:
-                found = list(range(start, start + len(phrase_ids)))
-                break
-        spans[name] = found
+                found.extend(range(start, start + len(phrase_ids)))
+                # No break — keep scanning for further occurrences
+        spans[name] = sorted(set(found))
     return spans
-
 
 def build_weight_schedule(
     total_steps: int,
