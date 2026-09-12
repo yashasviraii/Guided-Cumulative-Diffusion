@@ -96,7 +96,7 @@ class AttentionModulationDiffusion:
 
         BG_STEPS = int(num_inference_steps * (100 / 1200))
         INTRO_PHASE_END = int(num_inference_steps * (1000 / 1200))
-        step_allocations = compute_step_allocations(node_names, priority_scores, BG_STEPS, INTRO_PHASE_END)
+        step_allocations = compute_step_allocations(node_names, priority_scores, BG_STEPS, INTRO_PHASE_END,ramp_len=ramp_len)
 
         full_prompt, concept_searches = build_cumulative_prompt(
             background, node_names, attributes, relations, priority_scores, prompt_rewriter
@@ -158,7 +158,11 @@ class AttentionModulationDiffusion:
         for step_index, timestep in enumerate(timesteps):
             current_step = step_index + 1
             self._attn_state.weight_vector = weight_schedule[step_index].to(self.device)
-
+            if step_index in (0, 50, 100, 150, 199, 220):
+                wv = weight_schedule[step_index]
+                print(f"[AM] step {step_index}: "
+                    f"min={wv.min():.3f} max={wv.max():.3f} "
+                    f"n_lt1={(wv < 0.99).sum().item()} / {wv.numel()}")
             with torch.no_grad():
                 self._attn_state.enabled = True
                 noise_cond = unet(latents, timestep, encoder_hidden_states=cond_emb).sample

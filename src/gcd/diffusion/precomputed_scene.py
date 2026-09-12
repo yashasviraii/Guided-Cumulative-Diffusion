@@ -36,7 +36,9 @@ from gcd.graph.sanitize import sanitize_background
 # --- Priority ensemble configuration ---
 W_RGCN = 0.6   # ensemble weight for RGCN; 1-W_RGCN goes to class-prior
 
-
+# --- Debug: track which scenes have had their GNN scores printed ---
+_DEBUG_SEEN = set()
+DEBUG_GNN = True   # set to False once verified
 @lru_cache(maxsize=1)
 def _load_class_prior() -> dict:
     for p in [Path("checkpoints/class_prior_clean.json"),
@@ -53,9 +55,10 @@ def _canonical(name: str) -> str:
     return re.sub(r"(?<!^)(?=[A-Z])", " ", name).lower().strip()
 
 
-def _minmax(a: np.ndarray) -> np.ndarray:
+def _minmax(a: np.ndarray, floor: float = 0.3) -> np.ndarray:
     lo, hi = float(a.min()), float(a.max())
-    return (a - lo) / max(hi - lo, 1e-6)
+    stretched = (a - lo) / max(hi - lo, 1e-6)
+    return floor + (1.0 - floor) * stretched   # range [0.3, 1.0], not [0, 1]
 
 
 def _ensemble_priority(rgcn_scores: np.ndarray, node_names: List[str]) -> np.ndarray:
@@ -124,6 +127,12 @@ def load_precomputed_scene(
 
     cleaned_background = sanitize_background(background, node_names, objects)
 
+    if DEBUG_GNN and file_id not in _DEBUG_SEEN:
+        _DEBUG_SEEN.add(file_id)
+        print(f"[GNN] {file_id} | nodes={len(node_names)} | "
+            f"names={node_names} | "
+            f"ensemble={[round(float(x), 3) for x in ensemble_raw[:6]]} | "
+            f"normalized={[round(float(x), 3) for x in priority_scores[:6]]}")
     return {
         "objects": objects,
         "relations": relations,

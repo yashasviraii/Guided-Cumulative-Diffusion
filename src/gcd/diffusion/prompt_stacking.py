@@ -85,22 +85,54 @@ def compute_step_allocations(
     priority_scores: np.ndarray,
     bg_steps: int,
     intro_phase_end: int,
+    ramp_len: int = 3,
+    max_share: float = 0.5,
 ) -> Dict[str, Tuple[int, int]]:
-    """Partition [bg_steps, intro_phase_end) across objects proportionally to priority."""
+    """Partition [bg_steps, intro_phase_end) across objects proportionally to priority.
+
+    Guarantees:
+      - every object gets at least (ramp_len + 2) steps, so it is fully introduced
+      - no object takes more than max_share of the introduction budget
+      - highest-priority object is introduced first
+    """
+    n = len(node_names)
     obj_steps = intro_phase_end - bg_steps
+    if n == 0 or obj_steps <= 0:
+        return {}
+
+    # Order by priority (highest first)
+    order = np.argsort(priority_scores)[::-1]
+    sorted_names = [node_names[int(i)] for i in order]
+    sorted_scores = np.array([float(priority_scores[int(i)]) for i in order])
+
+    # Minimum window per object: enough for ramp + a few fully-active steps
+    min_steps = max(ramp_len + 2, obj_steps // (n * 4))
+
+    # Start with everyone at the minimum
+    alloc_steps = np.full(n, float(min_steps))
+    remaining = obj_steps - min_steps * n
+
+    if remaining > 0:
+        # Proportional share of the remaining budget, capped at max_share
+        s = sorted_scores / max(sorted_scores.sum(), 1e-9)
+        capped = np.minimum(s, max_share)
+        capped = capped / capped.sum()
+        alloc_steps += capped * remaining
+
+    # Round, fix drift on the top object
+    alloc_steps = np.round(alloc_steps).astype(int)
+    alloc_steps[0] += obj_steps - alloc_steps.sum()
+
+    # Build the dict in priority order
     step_allocations: Dict[str, Tuple[int, int]] = {}
     cursor = bg_steps
-    for idx in np.argsort(priority_scores)[::-1]:
-        obj_name = node_names[int(idx)]
-        n_steps = int(round(float(priority_scores[int(idx)]) * obj_steps))
-        if n_steps <= 0:
-            continue
+    for i in range(n):
+        n_steps = int(alloc_steps[i])
         end = min(intro_phase_end, cursor + n_steps)
-        step_allocations[obj_name] = (cursor, end)
+        step_allocations[sorted_names[i]] = (cursor, end)
         cursor = end
 
     if step_allocations:
         last = next(reversed(step_allocations))
         step_allocations[last] = (step_allocations[last][0], intro_phase_end)
-
     return step_allocations

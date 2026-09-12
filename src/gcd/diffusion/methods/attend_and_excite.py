@@ -45,7 +45,7 @@ class AttendAndExciteDiffusion:
         try:
             config = dict(self.pipeline.scheduler.config)
             config["num_train_timesteps"] = max(
-                1200, config.get("num_train_timesteps", 1000)
+                1000, config.get("num_train_timesteps", 1000)
             )
             self.pipeline.scheduler = DDIMScheduler.from_config(config)
             print(

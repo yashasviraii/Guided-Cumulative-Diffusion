@@ -42,6 +42,7 @@ from diffusers import DDIMScheduler, StableDiffusionPipeline, StableDiffusionXLP
 from PIL import Image
 
 from gcd.diffusion.attention_processor import (
+    RAMP_LEN,
     AttentionState,
     GCDAttentionProcessor,
     build_weight_schedule,
@@ -153,18 +154,49 @@ class ModelRunner:
         img = (img / 2 + 0.5).clamp(0, 1).detach().cpu().permute(0, 2, 3, 1).numpy()[0]
         return Image.fromarray((img * 255).round().astype(np.uint8))
 
-    def compute_step_allocations(self, node_names: List[str], priority_scores: np.ndarray) -> Dict[str, Tuple[int, int]]:
-        obj_budget = self.intro_end - self.bg_steps
+    def compute_step_allocations(
+        self,
+        node_names: List[str],
+        priority_scores: np.ndarray,
+        ramp_len: int = 3,
+        max_share: float = 0.5,
+    ) -> Dict[str, Tuple[int, int]]:
+        """Partition [bg_steps, intro_end) across objects proportionally to priority.
+
+        Guarantees:
+        - every object gets at least (ramp_len + 2) steps so it is fully introduced
+        - no object takes more than max_share of the introduction budget
+        - highest-priority object is introduced first
+        """
+        n = len(node_names)
+        obj_steps = self.intro_end - self.bg_steps
+        if n == 0 or obj_steps <= 0:
+            return {}
+
+        order = np.argsort(priority_scores)[::-1]
+        sorted_names = [node_names[int(i)] for i in order]
+        sorted_scores = np.array([float(priority_scores[int(i)]) for i in order])
+
+        min_steps = max(ramp_len + 2, obj_steps // (n * 4))
+        alloc_steps = np.full(n, float(min_steps))
+        remaining = obj_steps - min_steps * n
+
+        if remaining > 0:
+            s = sorted_scores / max(sorted_scores.sum(), 1e-9)
+            capped = np.minimum(s, max_share)
+            capped = capped / capped.sum()
+            alloc_steps += capped * remaining
+
+        alloc_steps = np.round(alloc_steps).astype(int)
+        alloc_steps[0] += obj_steps - alloc_steps.sum()
+
         allocations: Dict[str, Tuple[int, int]] = {}
         cursor = self.bg_steps
-        for idx in np.argsort(priority_scores)[::-1]:
-            name = node_names[int(idx)]
-            n_steps = round(float(priority_scores[int(idx)]) * obj_budget)
-            if n_steps <= 0:
-                continue
-            end = min(self.intro_end, cursor + n_steps)
-            allocations[name] = (cursor, end)
+        for i in range(n):
+            end = min(self.intro_end, cursor + int(alloc_steps[i]))
+            allocations[sorted_names[i]] = (cursor, end)
             cursor = end
+
         if allocations:
             last = next(reversed(allocations))
             allocations[last] = (allocations[last][0], self.intro_end)
@@ -338,7 +370,7 @@ class ModelRunner:
         if scene is None:
             return None
         objects, relations, background, node_names, scores = scene
-        allocations = self.compute_step_allocations(node_names, scores)
+        allocations = self.compute_step_allocations(node_names, scores,ramp_len=RAMP_LEN)
         base_prompt = background or "a scene"
 
         order = [name for name, _ in sorted(allocations.items(), key=lambda item: item[1][0])]
