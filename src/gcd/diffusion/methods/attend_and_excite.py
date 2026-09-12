@@ -84,13 +84,17 @@ class AttendAndExciteDiffusion:
         output_dir: Optional[str] = None,
         prompt_rewriter: Optional[DescriptionParser] = None,
         max_iter_to_alter: int = 25,
+        raw_description: Optional[str] = None,
     ) -> Tuple[Image.Image, str]:
         # Attend-and-Excite operates on a normal short prompt, not a 1200-step
         # priority schedule; we still use the same cumulative-prompt builder
         # so all four methods describe the same scene content.
-        final_prompt, _ = build_cumulative_prompt(
-            background, node_names, attributes, relations, priority_scores, prompt_rewriter
-        )
+        if raw_description is not None:
+            final_prompt = raw_description
+        else:
+            final_prompt, _ = build_cumulative_prompt(
+                background, node_names, attributes, relations, priority_scores, prompt_rewriter
+            )
         print(f"[AttendAndExcite] Prompt: {final_prompt[:120]}...")
 
         token_indices = self._subject_token_indices(final_prompt, node_names)

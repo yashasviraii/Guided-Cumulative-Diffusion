@@ -202,7 +202,7 @@ def run_sweep(
                     run_tag += f"_seed{seed}"
 
                 # Simple baseline: use the raw VLM description, not the structured prompt.
-                if method_name == "simple":
+                if method_name in ("simple", "attend_and_excite"):
                     extra_kwargs["raw_description"] = description
 
                 output_dir = output_root / run_tag
