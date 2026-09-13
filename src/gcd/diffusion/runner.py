@@ -146,11 +146,13 @@ def run_sweep(
     graphs_dir: Optional[str] = None,
     parsed_path: Optional[str] = None,
     background_path: Optional[str] = None,
-    base_model: str = DEFAULT_BASE_MODEL
+    base_model: str = DEFAULT_BASE_MODEL,
+    bias_scales: List[float] = None,
 ) -> None:
     method_cls = METHOD_REGISTRY[method_name]
     precomputed_mode = graphs_dir is not None and parsed_path is not None
-
+    if bias_scales is None:
+        bias_scales = [2.0]
     print("\n[Step 1] Loading shared models...")
     gnn_model = SimpleGCNInference(gnn_checkpoint, device=device)
     diffusion = method_cls(base_model=base_model, device=device)
@@ -169,6 +171,8 @@ def run_sweep(
         parser = DescriptionParser(model_name=llm_model, device=device)
 
     supports_ramp = method_name == "attention_modulation"
+    supports_scale = method_name == "attention_modulation"  
+    scale_values = bias_scales if supports_scale else [None] 
     ramp_values = ramp_sizes if supports_ramp else [None]
 
     for entry in entries:
@@ -190,58 +194,63 @@ def run_sweep(
             continue
 
         for ramp_len in ramp_values:
-            for seed in seeds:
-                run_tag = img_id
-                extra_kwargs: Dict = {}
-                # Only append "_ramp{N}" when actually sweeping more than one ramp size.
-                if ramp_len is not None and len(ramp_values) > 1:
-                    run_tag += f"_ramp{ramp_len}"
-                if ramp_len is not None:
-                    extra_kwargs["ramp_len"] = ramp_len
-                if len(seeds) > 1:
-                    run_tag += f"_seed{seed}"
+            for alpha in scale_values:
+                for seed in seeds:
+                    run_tag = img_id
+                    extra_kwargs: Dict = {}
+                    if ramp_len is not None and len(ramp_values) > 1:
+                        run_tag += f"_ramp{ramp_len}"
+                    if ramp_len is not None:
+                        extra_kwargs["ramp_len"] = ramp_len
+                    if alpha is not None and len(scale_values) > 1:
+                        run_tag += f"_a{alpha}"
+                    if alpha is not None:
+                        extra_kwargs["bias_scale"] = alpha
+                    if len(seeds) > 1:
+                        run_tag += f"_seed{seed}"
 
-                # Simple baseline: use the raw VLM description, not the structured prompt.
-                if method_name in ("simple", "attend_and_excite", "attention_modulation"):
-                    extra_kwargs["raw_description"] = description
+                    # Simple baseline: use the raw VLM description, not the structured prompt.
+                    if method_name in ("simple", "attend_and_excite", "attention_modulation"):
+                        extra_kwargs["raw_description"] = description
 
-                output_dir = output_root / run_tag
-                if (output_dir / "generated_image.png").exists():
-                    print(f"Skipping {run_tag}, output already exists.")
-                    continue
-                output_dir.mkdir(parents=True, exist_ok=True)
+                    output_dir = output_root / run_tag
+                    if (output_dir / "generated_image.png").exists():
+                        print(f"Skipping {run_tag}, output already exists.")
+                        continue
+                    output_dir.mkdir(parents=True, exist_ok=True)
 
-                try:
-                    image, final_prompt = diffusion.infer(
-                        background=scene["background"],
-                        node_names=scene["node_names"],
-                        attributes=scene["objects"],
-                        relations=scene["relations"],
-                        priority_scores=scene["priority_scores"],
-                        num_inference_steps=num_inference_steps,
-                        seed=seed,
-                        output_dir=output_dir,
-                        prompt_rewriter=parser,
-                        **extra_kwargs,
-                    )
-                    image.save(output_dir / "generated_image.png")
-                    with open(output_dir / "inference_result.json", "w") as f:
-                        json.dump({
-                            "image_id": img_id,
-                            "method": method_name,
-                            "seed": seed,
-                            "ramp_len": ramp_len,
-                            "input_description": description,
-                            "extracted_objects": scene["objects"],
-                            "extracted_relations": scene["relations"],
-                            "cleaned_background": scene["background"],
-                            "priority_scores": {
-                                n: float(s) for n, s in zip(scene["node_names"], scene["priority_scores"])
-                            },
-                            "final_prompt": final_prompt,
-                        }, f, indent=2)
-                except Exception as exc:  # noqa: BLE001
-                    print(f"Failed on {run_tag}: {exc}")
+                    try:
+                        image, final_prompt = diffusion.infer(
+                            background=scene["background"],
+                            node_names=scene["node_names"],
+                            attributes=scene["objects"],
+                            relations=scene["relations"],
+                            priority_scores=scene["priority_scores"],
+                            num_inference_steps=num_inference_steps,
+                            seed=seed,
+                            output_dir=output_dir,
+                            prompt_rewriter=parser,
+                            **extra_kwargs,
+                        )
+                        image.save(output_dir / "generated_image.png")
+                        with open(output_dir / "inference_result.json", "w") as f:
+                            json.dump({
+                                "image_id": img_id,
+                                "method": method_name,
+                                "seed": seed,
+                                "ramp_len": ramp_len,
+                                "input_description": description,
+                                "extracted_objects": scene["objects"],
+                                "extracted_relations": scene["relations"],
+                                "cleaned_background": scene["background"],
+                                "bias_scale": alpha,
+                                "priority_scores": {
+                                    n: float(s) for n, s in zip(scene["node_names"], scene["priority_scores"])
+                                },
+                                "final_prompt": final_prompt,
+                            }, f, indent=2)
+                    except Exception as exc:  # noqa: BLE001
+                        print(f"Failed on {run_tag}: {exc}")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -284,6 +293,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--base-model", default=DEFAULT_BASE_MODEL,
         help="Diffusion backbone to use (overrides method default)"
     )
+    parser.add_argument(
+        "--bias-scales", type=float, nargs="+", default=[2.0],
+        help="Global attention-modulation strength α. "
+             "e.g. --bias-scales 0.0 0.5 1.0 1.5 2.0",
+    )
     return parser
 
 
@@ -305,7 +319,8 @@ def main() -> None:
         graphs_dir=args.graphs_dir,
         parsed_path=args.parsed,
         background_path=args.background,
-        base_model=args.base_model
+        base_model=args.base_model,
+        bias_scales=args.bias_scales,
     )
 
 

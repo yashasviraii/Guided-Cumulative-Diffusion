@@ -41,7 +41,12 @@ _BG_STOPWORDS = {
     "be","been","being","this","that","these","those","it","its","as","by","for","from",
     "into","over","under","up","down","visible","background","image","scene","photo",
 }
-
+def _search_phrase(name: str) -> str:
+    name = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', name)
+    name = re.sub(r"\s*\d+\s*$", "", name).strip().lower()
+    name = re.sub(r"(?<!^)(?=[A-Z])", " ", name)
+    words = name.split()
+    return words[-1] if words else name
 def _background_tokens_in_caption(caption: str, background_text: str, tokenizer) -> List[int]:
     """Return caption token indices whose decoded string matches a content word
     from the sanitized background text."""
@@ -67,13 +72,14 @@ def _background_tokens_in_caption(caption: str, background_text: str, tokenizer)
 class AttentionModulationDiffusion:
     """Guided Cumulative Diffusion (ours): log-bias cross-attention scheduling."""
 
-    def __init__(self, base_model: str = DEFAULT_BASE_MODEL, device: str = "cuda") -> None:
+    def __init__(self, base_model: str = DEFAULT_BASE_MODEL, device: str = "cuda",bias_scale: float = 2.0) -> None:
         self.device = device
         print(f"[AttentionModulation/GCD] Loading base model: {base_model}")
         self.pipeline = load_pipeline(base_model, device)
         swap_long_horizon_scheduler(self.pipeline)
 
         self._attn_state = AttentionState()
+        self._attn_state.bias_scale = bias_scale
         self._register_processors()
 
     def _register_processors(self) -> None:
@@ -118,6 +124,7 @@ class AttentionModulationDiffusion:
         obj_suppress: float = OBJ_SUPPRESS,
         raw_description: Optional[str] = None,
     ) -> Tuple[Image.Image, str]:
+        bias_scale = self._attn_state.bias_scale
         torch.manual_seed(seed)
         np.random.seed(seed)
 
@@ -126,12 +133,11 @@ class AttentionModulationDiffusion:
         step_allocations = compute_step_allocations(node_names, priority_scores, BG_STEPS, INTRO_PHASE_END,ramp_len=ramp_len)
         
         if raw_description is not None and len(raw_description.strip()) > 20:
-            full_prompt = raw_description
-            def _search_phrase(name: str) -> str:
-                name = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', name)
-                name = re.sub(r"\s*\d+\s*$", "", name).strip().lower()
-                words = name.split()
-                return words[-1] if words else name
+            _ids = self.pipeline.tokenizer(
+                raw_description, add_special_tokens=False, truncation=True, max_length=77
+            )["input_ids"]
+            self.pipeline.tokenizer.decode(_ids, skip_special_tokens=True)
+            
             concept_searches = {n: _search_phrase(n) for n in step_allocations.keys()}
 
         else:

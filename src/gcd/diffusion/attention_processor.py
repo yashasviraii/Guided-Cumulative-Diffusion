@@ -31,7 +31,7 @@ class AttentionState:
     def __init__(self) -> None:
         self.weight_vector: Optional[torch.Tensor] = None  # [n_text_tokens]
         self.enabled: bool = False  # True only during the conditional forward pass
-
+        self.bias_scale: float = 2.0
 
 class GCDAttentionProcessor:
     """Cross-attention processor applying ``AttentionState.weight_vector`` as a log-bias."""
@@ -91,6 +91,7 @@ class GCDAttentionProcessor:
             else:
                 wv = wv[:n_k]
             log_bias = torch.log(wv.clamp(min=1e-6)).view(1, 1, 1, -1)
+            log_bias = log_bias * self.state.bias_scale
             if B >= 2:
                 half = B // 2
                 scores = torch.cat([scores[:half], scores[half:] + log_bias], dim=0)
@@ -116,9 +117,10 @@ class GCDAttentionProcessor:
 
 # def find_token_spans(full_prompt: str, concept_phrases: Dict[str, str], tokenizer) -> Dict[str, List[int]]:
 #     """Sliding-window exact token match, returning {name: [token_indices]}."""
-#     full_ids: List[int] = tokenizer(
-#         full_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True
-#     )["input_ids"]
+#   full_ids: List[int] = tokenizer(
+        full_prompt, add_special_tokens=False, truncation=True,
+        max_length=tokenizer.model_max_length,
+    # )["input_ids"]
 
 #     spans: Dict[str, List[int]] = {}
 #     for name, phrase in concept_phrases.items():
@@ -136,9 +138,19 @@ class GCDAttentionProcessor:
 
 
 def find_token_spans(full_prompt: str, concept_phrases: Dict[str, str], tokenizer) -> Dict[str, List[int]]:
-    """Sliding-window exact token match with sub-word fallback, returning {name: [token_indices]}."""
-    # Encode prompt without padding to avoid scanning trailing pad tokens
-    full_ids: List[int] = tokenizer(full_prompt, truncation=True)["input_ids"]
+    """Sliding-window exact token match, returning {name: [token_indices]}.
+
+    Indices are aligned with the text encoder's input, which is
+    tokenizer(full_prompt, add_special_tokens=True) — position 0 is BOS.
+    """
+    # Must match the encoder's tokenization exactly, or the log-bias
+    # lands on the wrong positions.
+    full_ids: List[int] = tokenizer(
+        full_prompt,
+        add_special_tokens=True,
+        truncation=True,
+        max_length=tokenizer.model_max_length,
+    )["input_ids"]
 
     spans: Dict[str, List[int]] = {}
     for name, phrase in concept_phrases.items():
@@ -148,25 +160,13 @@ def find_token_spans(full_prompt: str, concept_phrases: Dict[str, str], tokenize
             continue
 
         found: List[int] = []
-
-        # 1. Primary Search: Match full phrase token sequence
         phrase_ids = tokenizer(phrase_str, add_special_tokens=False)["input_ids"]
-        if phrase_ids:
-            n_len = len(phrase_ids)
+        n_len = len(phrase_ids)
+        if n_len:
+            # start at 1 to skip BOS
             for start in range(1, len(full_ids) - n_len + 1):
                 if full_ids[start : start + n_len] == phrase_ids:
                     found.extend(range(start, start + n_len))
-
-        # 2. Fallback Search: Match individual words if full phrase sequence missed
-        if not found and " " in phrase_str:
-            for word in phrase_str.split():
-                w_ids = tokenizer(word, add_special_tokens=False)["input_ids"]
-                if not w_ids:
-                    continue
-                w_len = len(w_ids)
-                for start in range(1, len(full_ids) - w_len + 1):
-                    if full_ids[start : start + w_len] == w_ids:
-                        found.extend(range(start, start + w_len))
 
         spans[name] = sorted(set(found))
 

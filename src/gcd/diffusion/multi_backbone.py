@@ -426,7 +426,7 @@ class ModelRunner:
 
     # ── Method: Attention Modulation (GCD, ours) ────────────────────────────
 
-    def run_attention_modulation(self, description, output_dir, parser, gnn_model, seed, height=512, width=512, file_path=None, precomputed=None):
+    def run_attention_modulation(self, description, output_dir, parser, gnn_model, seed, height=512, width=512, file_path=None, precomputed=None,bias_scale: float = 2.0):
         scene = self._prepare_scene(description, parser, gnn_model, file_path, precomputed)
         if scene is None:
             return None
@@ -436,14 +436,17 @@ class ModelRunner:
 
         order = [name for name, _ in sorted(allocations.items(), key=lambda item: item[1][0])]
         if description is not None and len(description.strip()) > 20:
-            full_prompt=description
+            _ids = self.pipeline.tokenizer(
+                description, add_special_tokens=False, truncation=True, max_length=77
+            )["input_ids"]
+            full_prompt = self.pipeline.tokenizer.decode(_ids, skip_special_tokens=True)
         else:
             full_prompt = self._stack_prompt(parser, base_prompt, order, objects, relations)
         import re
         def _search_phrase(name: str) -> str:
             name = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', name)
             name = re.sub(r"\s*\d+\s*$", "", name).strip().lower()
-            # Prefer the last word (usually the class noun) — shorter, higher match rate
+            name = re.sub(r"(?<!^)(?=[A-Z])", " ", name)
             words = name.split()
             return words[-1] if words else name
 
@@ -468,6 +471,7 @@ class ModelRunner:
         )
 
         attn_state = AttentionState()
+        attn_state.bias_scale = float(bias_scale)
         processor = GCDAttentionProcessor(attn_state)
         saved_processors = dict(self.pipeline.unet.attn_processors)
         self.pipeline.unet.set_attn_processor({k: processor for k in saved_processors})
