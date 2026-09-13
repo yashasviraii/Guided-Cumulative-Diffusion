@@ -459,6 +459,9 @@ class ModelRunner:
         
         _hits = sum(1 for v in _ts.values() if v)
         print(f"[AM] token spans: {_hits}/{len(_ts)} objects matched in caption")
+        unmatched = [k for k, v in _ts.items() if not v]
+        if unmatched:
+            print(f"[AM] Unmatched concept keys: {unmatched}")
         weight_schedule = build_weight_schedule(
             total_steps=self.num_steps, bg_steps=self.bg_steps, step_allocations=allocations,
                 token_spans=_ts, n_tokens=tokenizer.model_max_length,

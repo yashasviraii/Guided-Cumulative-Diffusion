@@ -149,6 +149,9 @@ class AttentionModulationDiffusion:
 
         _hits = sum(1 for v in token_spans.values() if v)
         print(f"[AM] token spans: {_hits}/{len(token_spans)} objects matched")
+        unmatched = [k for k, v in token_spans.items() if not v]
+        if unmatched:
+            print(f"[AM] Unmatched concept keys: {unmatched}")
         n_tok = self.pipeline.tokenizer.model_max_length
         weight_schedule = build_weight_schedule(
             total_steps=num_inference_steps, bg_steps=BG_STEPS, step_allocations=step_allocations,

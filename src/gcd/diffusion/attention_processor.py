@@ -24,6 +24,7 @@ OBJ_SUPPRESS = 0.5
 RAMP_LEN = 3
 
 
+
 class AttentionState:
     """Mutable per-step state shared by every attention-processor instance."""
 
@@ -113,24 +114,62 @@ class GCDAttentionProcessor:
         return out / attn.rescale_output_factor
 
 
+# def find_token_spans(full_prompt: str, concept_phrases: Dict[str, str], tokenizer) -> Dict[str, List[int]]:
+#     """Sliding-window exact token match, returning {name: [token_indices]}."""
+#     full_ids: List[int] = tokenizer(
+#         full_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True
+#     )["input_ids"]
+
+#     spans: Dict[str, List[int]] = {}
+#     for name, phrase in concept_phrases.items():
+#         phrase_ids = tokenizer(phrase.strip(), add_special_tokens=False)["input_ids"]
+#         found: List[int] = []
+#         if not phrase_ids:
+#             spans[name] = found
+#             continue
+#         for start in range(1, len(full_ids) - len(phrase_ids) + 1):
+#             if full_ids[start : start + len(phrase_ids)] == phrase_ids:
+#                 found.extend(range(start, start + len(phrase_ids)))
+#                 # No break — keep scanning for further occurrences
+#         spans[name] = sorted(set(found))
+#     return spans
+
+
 def find_token_spans(full_prompt: str, concept_phrases: Dict[str, str], tokenizer) -> Dict[str, List[int]]:
-    """Sliding-window exact token match, returning {name: [token_indices]}."""
-    full_ids: List[int] = tokenizer(
-        full_prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True
-    )["input_ids"]
+    """Sliding-window exact token match with sub-word fallback, returning {name: [token_indices]}."""
+    # Encode prompt without padding to avoid scanning trailing pad tokens
+    full_ids: List[int] = tokenizer(full_prompt, truncation=True)["input_ids"]
 
     spans: Dict[str, List[int]] = {}
     for name, phrase in concept_phrases.items():
-        phrase_ids = tokenizer(phrase.strip(), add_special_tokens=False)["input_ids"]
-        found: List[int] = []
-        if not phrase_ids:
-            spans[name] = found
+        phrase_str = phrase.strip()
+        if not phrase_str:
+            spans[name] = []
             continue
-        for start in range(1, len(full_ids) - len(phrase_ids) + 1):
-            if full_ids[start : start + len(phrase_ids)] == phrase_ids:
-                found.extend(range(start, start + len(phrase_ids)))
-                # No break — keep scanning for further occurrences
+
+        found: List[int] = []
+
+        # 1. Primary Search: Match full phrase token sequence
+        phrase_ids = tokenizer(phrase_str, add_special_tokens=False)["input_ids"]
+        if phrase_ids:
+            n_len = len(phrase_ids)
+            for start in range(1, len(full_ids) - n_len + 1):
+                if full_ids[start : start + n_len] == phrase_ids:
+                    found.extend(range(start, start + n_len))
+
+        # 2. Fallback Search: Match individual words if full phrase sequence missed
+        if not found and " " in phrase_str:
+            for word in phrase_str.split():
+                w_ids = tokenizer(word, add_special_tokens=False)["input_ids"]
+                if not w_ids:
+                    continue
+                w_len = len(w_ids)
+                for start in range(1, len(full_ids) - w_len + 1):
+                    if full_ids[start : start + w_len] == w_ids:
+                        found.extend(range(start, start + w_len))
+
         spans[name] = sorted(set(found))
+
     return spans
 
 def build_weight_schedule(
