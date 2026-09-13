@@ -61,7 +61,36 @@ GUIDANCE_SCALE = 7.5
 # steps for comparable quality than SD 1.x).
 _BG_FRAC = 100 / 1200
 _INTRO_FRAC = 1000 / 1200
+_BG_STOPWORDS = {
+    "a","an","the","and","or","of","in","on","at","to","with","is","are","was","were",
+    "be","been","being","this","that","these","those","it","its","as","by","for","from",
+    "into","over","under","up","down","visible","background","image","scene","photo",
+}
 
+
+def normalize_concept_name(name: str) -> str:
+    """Converts CamelCase node names to natural text space-separated words."""
+    # Insert space before capital letters: 'PurpleBag' -> 'Purple Bag'
+    name = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', name)
+    # Strip trailing digits used for node IDs: 'Man1' -> 'Man'
+    name = re.sub(r'\d+$', '', name)
+    return name.strip().lower()
+def _background_tokens_in_caption(caption: str, background_text: str, tokenizer):
+    if not background_text:
+        return []
+    bg_words = {
+        w for w in re.findall(r"[a-z]+", background_text.lower())
+        if w not in _BG_STOPWORDS and len(w) >= 4
+    }
+    if not bg_words:
+        return []
+    cap_ids = tokenizer(caption, add_special_tokens=False)["input_ids"]
+    spans = []
+    for i, tid in enumerate(cap_ids):
+        tok = tokenizer.decode([tid]).strip().lower().lstrip("#")
+        if tok and tok in bg_words:
+            spans.append(i)
+    return spans
 
 def phase_boundaries(num_steps: int) -> Tuple[int, int]:
     bg = max(1, round(num_steps * _BG_FRAC))
@@ -406,14 +435,33 @@ class ModelRunner:
         base_prompt = background or "a scene"
 
         order = [name for name, _ in sorted(allocations.items(), key=lambda item: item[1][0])]
-        full_prompt = self._stack_prompt(parser, base_prompt, order, objects, relations)
-        concept_searches = {"background": re.split(r"[.,;]", base_prompt)[0].strip()[:40], **{n: n for n in order}}
+        if description is not None and len(description.strip()) > 20:
+            full_prompt=description
+        else:
+            full_prompt = self._stack_prompt(parser, base_prompt, order, objects, relations)
+        import re
+        def _search_phrase(name: str) -> str:
+            name = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', name)
+            name = re.sub(r"\s*\d+\s*$", "", name).strip().lower()
+            # Prefer the last word (usually the class noun) — shorter, higher match rate
+            words = name.split()
+            return words[-1] if words else name
 
+        
+
+        concept_searches = {n: _search_phrase(n) for n in order}
         tokenizer = self.pipeline.tokenizer
-        token_spans = find_token_spans(full_prompt, concept_searches, tokenizer)
+        _ts = find_token_spans(full_prompt, concept_searches, tokenizer)
+        if description is not None and background:
+            bg_span = _background_tokens_in_caption(full_prompt, background, tokenizer)
+            _ts["background"] = bg_span
+            print(f"[AM] background tokens matched in caption: {len(bg_span)}")
+        
+        _hits = sum(1 for v in _ts.values() if v)
+        print(f"[AM] token spans: {_hits}/{len(_ts)} objects matched in caption")
         weight_schedule = build_weight_schedule(
             total_steps=self.num_steps, bg_steps=self.bg_steps, step_allocations=allocations,
-            token_spans=token_spans, n_tokens=tokenizer.model_max_length,
+                token_spans=_ts, n_tokens=tokenizer.model_max_length,
         )
 
         attn_state = AttentionState()
@@ -462,7 +510,7 @@ class ModelRunner:
         attn_state.enabled = False
 
         self.decode_latents(latents).save(output_dir / "generated_image.png")
-        self._dump_result(output_dir, "attention_modulation", description, full_prompt, objects, node_names, scores, allocations, token_spans)
+        self._dump_result(output_dir, "attention_modulation", description, full_prompt, objects, node_names, scores, allocations, _ts)
         return full_prompt
 
     @staticmethod

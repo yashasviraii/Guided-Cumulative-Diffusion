@@ -36,7 +36,33 @@ from gcd.parsing.description_parser import DescriptionParser
 
 BG_STEPS = 20          # was 100
 INTRO_PHASE_END = 200  # was 1000
+_BG_STOPWORDS = {
+    "a","an","the","and","or","of","in","on","at","to","with","is","are","was","were",
+    "be","been","being","this","that","these","those","it","its","as","by","for","from",
+    "into","over","under","up","down","visible","background","image","scene","photo",
+}
 
+def _background_tokens_in_caption(caption: str, background_text: str, tokenizer) -> List[int]:
+    """Return caption token indices whose decoded string matches a content word
+    from the sanitized background text."""
+    if not background_text:
+        return []
+    bg_words = {
+        w for w in re.findall(r"[a-z]+", background_text.lower())
+        if w not in _BG_STOPWORDS and len(w) >= 4
+    }
+    if not bg_words:
+        return []
+
+    cap_ids = tokenizer(caption, add_special_tokens=False)["input_ids"]
+    spans = []
+    for i, tid in enumerate(cap_ids):
+        tok = tokenizer.decode([tid]).strip().lower()
+        # strip leading "##" from BPE continuations
+        tok = tok.lstrip("#")
+        if tok and tok in bg_words:
+            spans.append(i)
+    return spans
 
 class AttentionModulationDiffusion:
     """Guided Cumulative Diffusion (ours): log-bias cross-attention scheduling."""
@@ -90,6 +116,7 @@ class AttentionModulationDiffusion:
         prompt_rewriter: Optional[DescriptionParser] = None,
         ramp_len: int = RAMP_LEN,
         obj_suppress: float = OBJ_SUPPRESS,
+        raw_description: Optional[str] = None,
     ) -> Tuple[Image.Image, str]:
         torch.manual_seed(seed)
         np.random.seed(seed)
@@ -97,14 +124,31 @@ class AttentionModulationDiffusion:
         BG_STEPS = int(num_inference_steps * (100 / 1200))
         INTRO_PHASE_END = int(num_inference_steps * (1000 / 1200))
         step_allocations = compute_step_allocations(node_names, priority_scores, BG_STEPS, INTRO_PHASE_END,ramp_len=ramp_len)
+        
+        if raw_description is not None and len(raw_description.strip()) > 20:
+            full_prompt = raw_description
+            def _search_phrase(name: str) -> str:
+                name = re.sub(r'([a-z0-9])([A-Z])', r'\1 \2', name)
+                name = re.sub(r"\s*\d+\s*$", "", name).strip().lower()
+                words = name.split()
+                return words[-1] if words else name
+            concept_searches = {n: _search_phrase(n) for n in step_allocations.keys()}
 
-        full_prompt, concept_searches = build_cumulative_prompt(
-            background, node_names, attributes, relations, priority_scores, prompt_rewriter
-        )
+        else:
+            full_prompt, concept_searches = build_cumulative_prompt(
+                background, node_names, attributes, relations, priority_scores, prompt_rewriter
+            )
         print(f"[AttentionModulation/GCD] Full prompt: {full_prompt[:120]}...")
         
 
         token_spans = find_token_spans(full_prompt, concept_searches, self.pipeline.tokenizer)
+        if raw_description is not None and background:
+            bg_span = _background_tokens_in_caption(full_prompt, background, self.pipeline.tokenizer)
+            token_spans["background"] = bg_span
+            print(f"[AM] background tokens matched in caption: {len(bg_span)}")
+
+        _hits = sum(1 for v in token_spans.values() if v)
+        print(f"[AM] token spans: {_hits}/{len(token_spans)} objects matched")
         n_tok = self.pipeline.tokenizer.model_max_length
         weight_schedule = build_weight_schedule(
             total_steps=num_inference_steps, bg_steps=BG_STEPS, step_allocations=step_allocations,
