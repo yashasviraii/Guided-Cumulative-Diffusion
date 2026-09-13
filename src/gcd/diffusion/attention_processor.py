@@ -118,9 +118,8 @@ class GCDAttentionProcessor:
 # def find_token_spans(full_prompt: str, concept_phrases: Dict[str, str], tokenizer) -> Dict[str, List[int]]:
 #     """Sliding-window exact token match, returning {name: [token_indices]}."""
 #   full_ids: List[int] = tokenizer(
-        full_prompt, add_special_tokens=False, truncation=True,
-        max_length=tokenizer.model_max_length,
-    # )["input_ids"]
+#       full_prompt, add_special_tokens=False, truncation=True,
+#        max_length=tokenizer.model_max_length )["input_ids"]
 
 #     spans: Dict[str, List[int]] = {}
 #     for name, phrase in concept_phrases.items():
@@ -136,15 +135,13 @@ class GCDAttentionProcessor:
 #         spans[name] = sorted(set(found))
 #     return spans
 
-
 def find_token_spans(full_prompt: str, concept_phrases: Dict[str, str], tokenizer) -> Dict[str, List[int]]:
-    """Sliding-window exact token match, returning {name: [token_indices]}.
+    """Sliding-window token match, returning {name: [token_indices]}.
 
-    Indices are aligned with the text encoder's input, which is
-    tokenizer(full_prompt, add_special_tokens=True) — position 0 is BOS.
+    Indices align with the text encoder's input (add_special_tokens=True,
+    position 0 = BOS). CLIP BPE distinguishes "sign" from " sign", so we try
+    both bare and leading-space variants of each phrase.
     """
-    # Must match the encoder's tokenization exactly, or the log-bias
-    # lands on the wrong positions.
     full_ids: List[int] = tokenizer(
         full_prompt,
         add_special_tokens=True,
@@ -159,16 +156,21 @@ def find_token_spans(full_prompt: str, concept_phrases: Dict[str, str], tokenize
             spans[name] = []
             continue
 
-        found: List[int] = []
-        phrase_ids = tokenizer(phrase_str, add_special_tokens=False)["input_ids"]
-        n_len = len(phrase_ids)
-        if n_len:
-            # start at 1 to skip BOS
-            for start in range(1, len(full_ids) - n_len + 1):
-                if full_ids[start : start + n_len] == phrase_ids:
-                    found.extend(range(start, start + n_len))
+        # CLIP BPE: bare word and space-prefixed word are distinct tokens
+        candidate_seqs: List[List[int]] = []
+        for variant in (phrase_str, f" {phrase_str}"):
+            ids = tokenizer(variant, add_special_tokens=False)["input_ids"]
+            if ids:
+                candidate_seqs.append(ids)
 
-        spans[name] = sorted(set(found))
+        found: set = set()
+        for phrase_ids in candidate_seqs:
+            n = len(phrase_ids)
+            for start in range(1, len(full_ids) - n + 1):   # 1 skips BOS
+                if full_ids[start : start + n] == phrase_ids:
+                    found.update(range(start, start + n))
+
+        spans[name] = sorted(found)
 
     return spans
 
